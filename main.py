@@ -155,6 +155,19 @@ def list_receipts(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, 
         raise HTTPException(status_code=500, detail=f"Database fetch error: {str(e)}")
 
 
+@app.delete("/receipts", tags=["Receipts"])
+def clear_all_receipts():
+    """Deletes all receipts from the database and resets the primary key counter."""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("TRUNCATE TABLE receipts RESTART IDENTITY;")
+            conn.commit()
+            return {"ok": True, "message": "All transaction data cleared successfully and ID sequence reset."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database wipe failed: {str(e)}")
+
+
 # --- Day 5 Frontend HTML ---
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -172,6 +185,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             --text-muted: #8b949e;
             --accent: #238636;
             --accent-hover: #2ea043;
+            --danger: #da3633;
+            --danger-hover: #f85149;
             --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -183,7 +198,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             padding: 30px 20px;
         }
         .container { max-width: 860px; margin: 0 auto; }
-        header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
+        header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: baseline; 
+            flex-wrap: wrap; 
+            gap: 10px;
+            margin-bottom: 24px; 
+            border-bottom: 1px solid var(--border); 
+            padding-bottom: 16px; 
+        }
         h1 { font-size: 24px; font-weight: 600; }
         p.subtitle { color: var(--text-muted); font-size: 14px; }
         
@@ -198,7 +222,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 6px;
             padding: 18px;
         }
-        .card h2 { font-size: 16px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-family: var(--font-mono); }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+        .card h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-family: var(--font-mono); }
         
         .form-group { margin-bottom: 14px; }
         label { display: block; font-size: 13px; margin-bottom: 5px; color: var(--text-muted); }
@@ -224,6 +254,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             cursor: pointer;
         }
         button:hover { background: var(--accent-hover); }
+
+        .btn-clear {
+            width: auto;
+            background: transparent;
+            color: var(--danger-hover);
+            border: 1px solid var(--border);
+            padding: 4px 10px;
+            font-size: 12px;
+            font-family: var(--font-mono);
+            font-weight: 500;
+        }
+        .btn-clear:hover {
+            background: rgba(218, 54, 51, 0.15);
+            border-color: var(--danger);
+        }
 
         .stats-strip {
             display: grid;
@@ -254,13 +299,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
     <div class="container">
         <header>
-            <h1>Receipts & 9% GST Engine</h1>
-            <p class="subtitle">FastAPI + Neon Postgres • Single Artifact</p>
+            <div>
+                <h1>Receipts & 9% GST Engine</h1>
+                <p class="subtitle">FastAPI + Neon Postgres • Single Artifact</p>
+            </div>
+            <button class="btn-clear" id="clearBtn" title="Deletes all rows and resets ID counter">Wipe All Data</button>
         </header>
 
         <div class="grid">
             <div class="card">
-                <h2>Add Receipt</h2>
+                <div class="card-header">
+                    <h2>Add Receipt</h2>
+                </div>
                 <form id="receiptForm">
                     <div class="form-group">
                         <label for="merchant">Merchant</label>
@@ -280,7 +330,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
 
             <div class="card">
-                <h2>Ledger Summary</h2>
+                <div class="card-header">
+                    <h2>Ledger Summary</h2>
+                </div>
                 <div class="stats-strip">
                     <div class="stat-box">
                         <div class="stat-label">Count</div>
@@ -396,6 +448,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Save Receipt';
+            }
+        });
+
+        document.getElementById('clearBtn').addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to delete ALL receipts? This will reset the ledger.')) {
+                return;
+            }
+            try {
+                const res = await fetch('/receipts', { method: 'DELETE' });
+                if (!res.ok) throw new Error('Failed to clear');
+                await fetchLedger();
+            } catch (err) {
+                alert('Clear error: ' + err.message);
             }
         });
 
