@@ -9,12 +9,6 @@ from pydantic import BaseModel, Field
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
@@ -32,7 +26,7 @@ def get_db():
 
 
 def init_db_schema():
-    """Idempotent table and column creation."""
+    """Initializes tables on demand without blocking startup."""
     if DATABASE_URL:
         try:
             with get_db() as conn:
@@ -53,7 +47,7 @@ def init_db_schema():
                     """)
                 conn.commit()
         except Exception as e:
-            print(f"Schema init notice: {e}")
+            print(f"Database schema check notice: {e}")
 
 
 app = FastAPI(
@@ -86,14 +80,16 @@ class ReceiptListResponse(BaseModel):
     data: List[ReceiptResponse]
 
 
-# --- Endpoints ---
+# --- Endpoints supporting both direct and /api prefixed routes ---
 
 @app.get("/health", tags=["System"])
+@app.get("/api/health", tags=["System"])
 def health():
     return {"ok": True, "database_connected": bool(DATABASE_URL)}
 
 
 @app.post("/receipts", response_model=ReceiptResponse, status_code=201, tags=["Receipts"])
+@app.post("/api/receipts", response_model=ReceiptResponse, status_code=201, tags=["Receipts"])
 def create_receipt(receipt: ReceiptCreate):
     init_db_schema()
     gst = calculate_gst_cents(receipt.amount_cents)
@@ -117,6 +113,7 @@ def create_receipt(receipt: ReceiptCreate):
 
 
 @app.get("/receipts", response_model=ReceiptListResponse, tags=["Receipts"])
+@app.get("/api/receipts", response_model=ReceiptListResponse, tags=["Receipts"])
 def list_receipts(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
     init_db_schema()
     try:
@@ -332,6 +329,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         async function fetchLedger() {
             try {
+                // Fetch receipts from relative endpoint
                 const res = await fetch('/receipts');
                 const data = await res.json();
                 
@@ -414,5 +412,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 @app.get("/", response_class=HTMLResponse, tags=["UI"])
+@app.get("/api", response_class=HTMLResponse, tags=["UI"])
 def index():
     return HTMLResponse(content=HTML_TEMPLATE, status_code=200)
