@@ -26,7 +26,6 @@ def get_db():
 
 
 def init_db_schema():
-    """Initializes tables on demand without blocking startup."""
     if DATABASE_URL:
         try:
             with get_db() as conn:
@@ -256,7 +255,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="container">
         <header>
             <h1>Receipts & 9% GST Engine</h1>
-            <p class="subtitle">FastAPI + Neon Postgres • Live Production</p>
+            <p class="subtitle">FastAPI + Neon Postgres • Single Artifact</p>
         </header>
 
         <div class="grid">
