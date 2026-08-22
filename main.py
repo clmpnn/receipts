@@ -1,5 +1,4 @@
 import os
-from contextlib import asynccontextmanager
 from datetime import date as PyDate
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List
@@ -7,23 +6,14 @@ from typing import List
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-import psycopg
-from psycopg.rows import dict_row
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def calculate_gst_cents(amount_cents: int) -> int:
-    """
-    Calculates the 9% Singapore GST inclusive tax component in integer cents.
-    Formula: GST = round((Total * 9) / 109)
-    """
+    """Calculates 9% Singapore GST inclusive tax in integer cents."""
     total = Decimal(str(amount_cents))
     gst = (total * Decimal("9")) / Decimal("109")
     return int(gst.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
@@ -31,12 +21,12 @@ def calculate_gst_cents(amount_cents: int) -> int:
 
 def get_db():
     if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL environment variable is not set.")
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        raise RuntimeError("DATABASE_URL environment variable is not configured.")
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def init_db_schema():
+    """Initializes tables on demand without blocking startup."""
     if DATABASE_URL:
         try:
             with get_db() as conn:
@@ -57,19 +47,17 @@ async def lifespan(app: FastAPI):
                     """)
                 conn.commit()
         except Exception as e:
-            print(f"Startup DB Error: {e}")
-    yield
+            print(f"Database schema check notice: {e}")
 
 
 app = FastAPI(
     title="Receipts Engine",
-    description="Day 5 - Ingestion, GST Calculation, and HTML Interface",
-    version="1.0.0",
-    lifespan=lifespan
+    description="Receipts ingestion, GST calculations, and HTML interface",
+    version="1.0.0"
 )
 
 
-# --- Pydantic Schemas ---
+# --- Schemas ---
 
 class ReceiptCreate(BaseModel):
     merchant: str = Field(..., min_length=1, max_length=255, json_schema_extra={"example": "FairPrice Supermarket"})
@@ -92,7 +80,7 @@ class ReceiptListResponse(BaseModel):
     data: List[ReceiptResponse]
 
 
-# --- API Routes ---
+# --- Endpoints ---
 
 @app.get("/health", tags=["System"])
 def health():
@@ -101,6 +89,7 @@ def health():
 
 @app.post("/receipts", response_model=ReceiptResponse, status_code=201, tags=["Receipts"])
 def create_receipt(receipt: ReceiptCreate):
+    init_db_schema()
     gst = calculate_gst_cents(receipt.amount_cents)
     try:
         with get_db() as conn:
@@ -116,13 +105,14 @@ def create_receipt(receipt: ReceiptCreate):
                 row = cur.fetchone()
                 conn.commit()
                 row["date"] = str(row["date"])
-                return row
+                return dict(row)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database insert error: {str(e)}")
 
 
 @app.get("/receipts", response_model=ReceiptListResponse, tags=["Receipts"])
 def list_receipts(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+    init_db_schema()
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -166,7 +156,7 @@ def list_receipts(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, 
         raise HTTPException(status_code=500, detail=f"Database fetch error: {str(e)}")
 
 
-# --- Day 5 Frontend Route ---
+# --- Day 5 Frontend HTML ---
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -266,11 +256,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="container">
         <header>
             <h1>Receipts & 9% GST Engine</h1>
-            <p class="subtitle">FastAPI + Neon Postgres • Single Artifact Day 5</p>
+            <p class="subtitle">FastAPI + Neon Postgres • Live Production</p>
         </header>
 
         <div class="grid">
-            <!-- Form Card -->
             <div class="card">
                 <h2>Add Receipt</h2>
                 <form id="receiptForm">
@@ -291,7 +280,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 </form>
             </div>
 
-            <!-- Ledger Display -->
             <div class="card">
                 <h2>Ledger Summary</h2>
                 <div class="stats-strip">
@@ -341,9 +329,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 const res = await fetch('/receipts');
                 const data = await res.json();
                 
-                document.getElementById('statCount').textContent = data.count;
-                document.getElementById('statTotal').textContent = formatCents(data.total_amount_cents);
-                document.getElementById('statGst').textContent = formatCents(data.total_gst_cents);
+                document.getElementById('statCount').textContent = data.count || 0;
+                document.getElementById('statTotal').textContent = formatCents(data.total_amount_cents || 0);
+                document.getElementById('statGst').textContent = formatCents(data.total_gst_cents || 0);
 
                 const tbody = document.getElementById('ledgerBody');
                 if (!data.data || data.data.length === 0) {
@@ -421,5 +409,4 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 @app.get("/", response_class=HTMLResponse, tags=["UI"])
 def index():
-    """Serves the Day 5 plain HTML user interface directly from FastAPI."""
     return HTMLResponse(content=HTML_TEMPLATE, status_code=200)
