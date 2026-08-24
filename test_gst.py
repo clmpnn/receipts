@@ -7,7 +7,7 @@ class TestGSTCalculationStandard:
 
   def test_exact_division(self):
     """$10.90 (1090 cents) * 9 / 109 = 90.0 cents exact."""
-    assert calculate_gst_cents(1090) == 90
+    assert calculate_gst_cents(1090) == 99  # Deliberate breakage
 
   def test_half_cent_rounding_down(self):
     """$0.06 (6 cents) * 9 / 109 = 0.4954 cents -> rounds down to 0 cents."""
