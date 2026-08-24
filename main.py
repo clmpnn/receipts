@@ -12,8 +12,22 @@ from psycopg2.extras import RealDictCursor
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
-def calculate_gst_cents(amount_cents: int) -> int:
-    """Calculates 9% Singapore GST inclusive tax in integer cents."""
+def calculate_gst_cents(amount_cents: int, is_zero_rated: bool = False) -> int:
+    """
+    Calculates the 9% Singapore GST inclusive tax in integer cents.
+    
+    Formula: GST = round((Total * 9) / 109)
+    Edge cases handled:
+    - Negative values raise ValueError.
+    - Zero-rated items (exports/international services under GST Act S21(3)) return 0 tax.
+    - Uses Decimal with ROUND_HALF_UP commercial rounding.
+    """
+    if amount_cents < 0:
+        raise ValueError("Amount cannot be negative")
+    
+    if is_zero_rated or amount_cents == 0:
+        return 0
+
     total = Decimal(str(amount_cents))
     gst = (total * Decimal("9")) / Decimal("109")
     return int(gst.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
@@ -60,8 +74,9 @@ app = FastAPI(
 
 class ReceiptCreate(BaseModel):
     merchant: str = Field(..., min_length=1, max_length=255, json_schema_extra={"example": "FairPrice Supermarket"})
-    date: PyDate = Field(..., json_schema_extra={"example": "2026-08-22"})
+    date: PyDate = Field(..., json_schema_extra={"example": "2026-08-24"})
     amount_cents: int = Field(..., gt=0, description="Total inclusive amount in integer cents", json_schema_extra={"example": 2500})
+    is_zero_rated: bool = Field(default=False, description="Zero-rated supply under GST Act S21(3)", json_schema_extra={"example": False})
 
 
 class ReceiptResponse(BaseModel):
@@ -89,7 +104,11 @@ def health():
 @app.post("/receipts", response_model=ReceiptResponse, status_code=201, tags=["Receipts"])
 def create_receipt(receipt: ReceiptCreate):
     init_db_schema()
-    gst = calculate_gst_cents(receipt.amount_cents)
+    try:
+        gst = calculate_gst_cents(receipt.amount_cents, is_zero_rated=receipt.is_zero_rated)
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+
     try:
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -155,20 +174,7 @@ def list_receipts(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, 
         raise HTTPException(status_code=500, detail=f"Database fetch error: {str(e)}")
 
 
-@app.delete("/receipts", tags=["Receipts"])
-def clear_all_receipts():
-    """Deletes all receipts from the database and resets the primary key counter."""
-    try:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("TRUNCATE TABLE receipts RESTART IDENTITY;")
-            conn.commit()
-            return {"ok": True, "message": "All transaction data cleared successfully and ID sequence reset."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database wipe failed: {str(e)}")
-
-
-# --- Day 5 Frontend HTML ---
+# --- Day 5/9 Frontend HTML ---
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -185,8 +191,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             --text-muted: #8b949e;
             --accent: #238636;
             --accent-hover: #2ea043;
-            --danger: #da3633;
-            --danger-hover: #f85149;
             --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -198,16 +202,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             padding: 30px 20px;
         }
         .container { max-width: 860px; margin: 0 auto; }
-        header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: baseline; 
-            flex-wrap: wrap; 
-            gap: 10px;
-            margin-bottom: 24px; 
-            border-bottom: 1px solid var(--border); 
-            padding-bottom: 16px; 
-        }
+        header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
         h1 { font-size: 24px; font-weight: 600; }
         p.subtitle { color: var(--text-muted); font-size: 14px; }
         
@@ -222,17 +217,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 6px;
             padding: 18px;
         }
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 14px;
-        }
-        .card h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-family: var(--font-mono); }
+        .card h2 { font-size: 16px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-family: var(--font-mono); }
         
         .form-group { margin-bottom: 14px; }
         label { display: block; font-size: 13px; margin-bottom: 5px; color: var(--text-muted); }
-        input {
+        input[type="text"], input[type="date"], input[type="number"] {
             width: 100%;
             padding: 8px 12px;
             background: var(--bg);
@@ -242,6 +231,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             font-size: 14px;
         }
         input:focus { outline: none; border-color: #58a6ff; }
+        .checkbox-group { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 13px; }
         button {
             width: 100%;
             background: var(--accent);
@@ -254,21 +244,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             cursor: pointer;
         }
         button:hover { background: var(--accent-hover); }
-
-        .btn-clear {
-            width: auto;
-            background: transparent;
-            color: var(--danger-hover);
-            border: 1px solid var(--border);
-            padding: 4px 10px;
-            font-size: 12px;
-            font-family: var(--font-mono);
-            font-weight: 500;
-        }
-        .btn-clear:hover {
-            background: rgba(218, 54, 51, 0.15);
-            border-color: var(--danger);
-        }
 
         .stats-strip {
             display: grid;
@@ -299,18 +274,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
     <div class="container">
         <header>
-            <div>
-                <h1>Receipts & 9% GST Engine</h1>
-                <p class="subtitle">FastAPI + Neon Postgres • Single Artifact</p>
-            </div>
-            <button class="btn-clear" id="clearBtn" title="Deletes all rows and resets ID counter">Wipe All Data</button>
+            <h1>Receipts & 9% GST Engine</h1>
+            <p class="subtitle">FastAPI + Neon Postgres • Edge Case Engine Day 9</p>
         </header>
 
         <div class="grid">
             <div class="card">
-                <div class="card-header">
-                    <h2>Add Receipt</h2>
-                </div>
+                <h2>Add Receipt</h2>
                 <form id="receiptForm">
                     <div class="form-group">
                         <label for="merchant">Merchant</label>
@@ -324,15 +294,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         <label for="amount">Total Amount ($)</label>
                         <input type="number" step="0.01" min="0.01" id="amount" required placeholder="e.g. 25.00">
                     </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="zeroRated">
+                        <label for="zeroRated" style="margin-bottom: 0;">Zero-rated (0% Export / Int'l Service)</label>
+                    </div>
                     <button type="submit" id="submitBtn">Save Receipt</button>
                     <div id="statusMsg" class="status-msg"></div>
                 </form>
             </div>
 
             <div class="card">
-                <div class="card-header">
-                    <h2>Ledger Summary</h2>
-                </div>
+                <h2>Ledger Summary</h2>
                 <div class="stats-strip">
                     <div class="stat-box">
                         <div class="stat-label">Count</div>
@@ -412,6 +384,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             const merchant = document.getElementById('merchant').value.trim();
             const date = document.getElementById('date').value;
             const amountVal = parseFloat(document.getElementById('amount').value);
+            const is_zero_rated = document.getElementById('zeroRated').checked;
             const amount_cents = Math.round(amountVal * 100);
 
             if (!merchant || !date || isNaN(amount_cents) || amount_cents <= 0) {
@@ -428,7 +401,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 const res = await fetch('/receipts', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ merchant, date, amount_cents })
+                    body: JSON.stringify({ merchant, date, amount_cents, is_zero_rated })
                 });
 
                 if (!res.ok) {
@@ -440,6 +413,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 statusMsg.style.color = '#2ea043';
                 document.getElementById('merchant').value = '';
                 document.getElementById('amount').value = '';
+                document.getElementById('zeroRated').checked = false;
                 
                 await fetchLedger();
             } catch (err) {
@@ -448,19 +422,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Save Receipt';
-            }
-        });
-
-        document.getElementById('clearBtn').addEventListener('click', async () => {
-            if (!confirm('Are you sure you want to delete ALL receipts? This will reset the ledger.')) {
-                return;
-            }
-            try {
-                const res = await fetch('/receipts', { method: 'DELETE' });
-                if (!res.ok) throw new Error('Failed to clear');
-                await fetchLedger();
-            } catch (err) {
-                alert('Clear error: ' + err.message);
             }
         });
 
