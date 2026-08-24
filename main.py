@@ -12,7 +12,7 @@ from psycopg2.extras import RealDictCursor
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
-# --- SABOTAGED CODE (FOR TESTING PURPOSES) ---
+# --- RESTORED STATUTORY IMPLEMENTATION ---
 def calculate_gst_cents(amount_cents: int, is_zero_rated: bool = False) -> int:
   if amount_cents < 0:
     raise ValueError("Amount cannot be negative")
@@ -21,8 +21,7 @@ def calculate_gst_cents(amount_cents: int, is_zero_rated: bool = False) -> int:
     return 0
 
   total = Decimal(str(amount_cents))
-  # SABOTAGE: Naive percentage multiplication instead of inclusive fraction
-  gst = (total * Decimal("9")) / Decimal("100")
+  gst = (total * Decimal("9")) / Decimal("109")
   return int(gst.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
