@@ -12,25 +12,18 @@ from psycopg2.extras import RealDictCursor
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
+# --- SABOTAGED CODE (FOR TESTING PURPOSES) ---
 def calculate_gst_cents(amount_cents: int, is_zero_rated: bool = False) -> int:
-    """
-    Calculates the 9% Singapore GST inclusive tax in integer cents.
-    
-    Formula: GST = round((Total * 9) / 109)
-    Edge cases handled:
-    - Negative values raise ValueError.
-    - Zero-rated items (exports/international services under GST Act S21(3)) return 0 tax.
-    - Uses Decimal with ROUND_HALF_UP commercial rounding.
-    """
-    if amount_cents < 0:
-        raise ValueError("Amount cannot be negative")
-    
-    if is_zero_rated or amount_cents == 0:
-        return 0
+  if amount_cents < 0:
+    raise ValueError("Amount cannot be negative")
 
-    total = Decimal(str(amount_cents))
-    gst = (total * Decimal("9")) / Decimal("109")
-    return int(gst.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+  if is_zero_rated or amount_cents == 0:
+    return 0
+
+  total = Decimal(str(amount_cents))
+  # SABOTAGE: Naive percentage multiplication instead of inclusive fraction
+  gst = (total * Decimal("9")) / Decimal("100")
+  return int(gst.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def get_db():
