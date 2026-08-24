@@ -1,0 +1,43 @@
+# Environment variables and secrets (Never commit!)
+.env
+.env.*
+*.env
+terraform.tfvars
+*.tfvars
+*.tfvars.json
+
+# Python virtual environment & runtime artifacts
+.venv/
+env/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Testing & Coverage caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Terraform state & provider binaries
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# IDE & OS-specific files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker local temp artifacts
+.dockerignore.dockerignore
+Dockerfile.dockerfile
